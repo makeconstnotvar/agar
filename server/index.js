@@ -128,7 +128,7 @@ io.on("connection", (socket) => {
 
 // Игровой цикл (60 FPS)
 setInterval(() => {
-  // Обновление позиций игроков
+  // Обновление позиций игроков1
   gameState.players.forEach((player) => {
     if (player.targetX !== undefined && player.targetY !== undefined) {
       const speed = 200 / player.radius; // Меньшие клетки двигаются быстрее
