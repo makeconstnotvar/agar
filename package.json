@@ -1,0 +1,30 @@
+{
+  "name": "agar-game",
+  "version": "1.0.0",
+  "description": "Multiplayer agar.io clone",
+  "main": "server/index.js",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "server": "nodemon ./server/index.js",
+    "start": "concurrently \"npm run server\" \"npm run dev\""
+  },
+  "keywords": [
+    "game",
+    "multiplayer",
+    "phaser",
+    "socket.io"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "nodemon": "^3.1.10",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "cors": "^2.8.5",
+    "phaser": "^3.90.0",
+    "socket.io-client": "^4.8.1",
+    "vite": "^7.1.9"
+  }
+}

@@ -1,0 +1,32 @@
+# Dependencies
+/node_modules
+
+# Build output
+/dist
+/build
+
+# IDEs and editors
+.idea/
+agar.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+.vscode/
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# OS generated files
+.DS_Store
+Thumbs.db
