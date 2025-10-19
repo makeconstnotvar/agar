@@ -8,11 +8,14 @@ class GameScene extends Phaser.Scene {
     this.otherPlayers = /* @__PURE__ */ new Map();
     this.foods = /* @__PURE__ */ new Map();
     this.foodGroup = null;
+    this.eatenFood = /* @__PURE__ */ new Set();
     this.camera = null;
     this.gameWidth = 5e3;
     this.gameHeight = 5e3;
     this.targetPosition = { x: 0, y: 0 };
-    this.lerpSpeed = 0.2;
+    this.lerpSpeed = 0.08;
+    this.lastPositionUpdate = 0;
+    this.positionUpdateInterval = 50;
   }
   preload() {
   }
@@ -22,12 +25,19 @@ class GameScene extends Phaser.Scene {
     this.camera.setBounds(0, 0, this.gameWidth, this.gameHeight);
     this.cameras.main.setBackgroundColor("#1a1a2e");
     this.physics.world.setBounds(0, 0, this.gameWidth, this.gameHeight);
+    const foodGraphics = this.make.graphics();
+    foodGraphics.fillStyle(65280);
+    foodGraphics.fillCircle(5, 5, 5);
+    foodGraphics.generateTexture("food", 10, 10);
+    foodGraphics.destroy();
+    this.foodGroup = this.physics.add.group();
     this.socket.on("gameState", (data) => {
       this.gameWidth = data.gameWidth;
       this.gameHeight = data.gameHeight;
       this.camera.setBounds(0, 0, this.gameWidth, this.gameHeight);
       this.physics.world.setBounds(0, 0, this.gameWidth, this.gameHeight);
       this.createPlayer(data.player);
+      this.physics.add.overlap(this.playerBody, this.foodGroup, this.eatFood, null, this);
       data.players.forEach((playerData) => {
         if (playerData.id !== this.socket.id) {
           this.createOtherPlayer(playerData);
@@ -68,18 +78,32 @@ class GameScene extends Phaser.Scene {
     this.updateScore();
     this.updatePlayersCount();
   }
-  update() {
+  update(time, delta) {
     if (this.playerBody) {
-      const speed = 200 / (this.player.radius / 20);
-      this.physics.moveTo(
-        this.playerBody,
+      const distance = Phaser.Math.Distance.Between(
+        this.playerBody.x,
+        this.playerBody.y,
         this.targetPosition.x,
-        this.targetPosition.y,
-        speed
+        this.targetPosition.y
       );
+      if (distance < 1) {
+        this.playerBody.body.setVelocity(0);
+      } else {
+        const angle = Phaser.Math.Angle.Between(
+          this.playerBody.x,
+          this.playerBody.y,
+          this.targetPosition.x,
+          this.targetPosition.y
+        );
+        const speed = 200 / (this.player.radius / 20);
+        this.physics.velocityFromRotation(angle, speed, this.playerBody.body.velocity);
+      }
       this.player.x = this.playerBody.x;
       this.player.y = this.playerBody.y;
-      this.socket.emit("playerMove", { x: this.player.x, y: this.player.y });
+      if (time - this.lastPositionUpdate > this.positionUpdateInterval) {
+        this.socket.emit("playerMove", { x: this.player.x, y: this.player.y });
+        this.lastPositionUpdate = time;
+      }
       this.centerCameraOnPlayer();
     }
     this.interpolateOtherPlayers();
@@ -128,33 +152,44 @@ class GameScene extends Phaser.Scene {
   }
   createFood(foodData) {
     if (this.foods.has(foodData.id)) return;
-    const graphics = this.add.graphics({ x: foodData.x, y: foodData.y });
-    graphics.lineStyle(1, 0, 1);
-    graphics.fillStyle(Phaser.Display.Color.HexStringToColor(foodData.color).color);
-    graphics.fillCircle(0, 0, foodData.radius);
-    graphics.strokeCircle(0, 0, foodData.radius);
-    this.physics.world.enable(graphics);
-    graphics.body.setCircle(foodData.radius);
-    graphics.body.setCollideWorldBounds(true);
-    this.foods.set(foodData.id, graphics);
+    const food = this.foodGroup.create(foodData.x, foodData.y, "food");
+    food.setData("id", foodData.id);
+    const scale = foodData.radius / 5;
+    food.setScale(scale);
+    food.body.setCircle(5);
+    this.foods.set(foodData.id, food);
+  }
+  eatFood(player, food) {
+    if (!food.active) {
+      return;
+    }
+    const foodId = food.getData("id");
+    if (foodId) {
+      this.eatenFood.add(foodId);
+      this.socket.emit("eatFood", foodId);
+      this.removeFood(foodId);
+      this.time.delayedCall(1e3, () => {
+        this.eatenFood.delete(foodId);
+      });
+    }
   }
   removeFood(foodId) {
     const food = this.foods.get(foodId);
     if (food) {
-      food.destroy();
+      this.foodGroup.remove(food, true, true);
       this.foods.delete(foodId);
     }
   }
   updateFoods(foodsData) {
     const serverFoodIds = new Set(foodsData.map((f) => f.id));
     foodsData.forEach((foodData) => {
-      if (!this.foods.has(foodData.id)) {
+      if (!this.foods.has(foodData.id) && !this.eatenFood.has(foodData.id)) {
         this.createFood(foodData);
       }
     });
-    this.foods.forEach((food) => {
-      if (!serverFoodIds.has(food.name)) {
-        this.removeFood(food.name);
+    this.foods.forEach((food, foodId) => {
+      if (!serverFoodIds.has(foodId)) {
+        this.removeFood(foodId);
       }
     });
   }
@@ -163,15 +198,19 @@ class GameScene extends Phaser.Scene {
     playersData.forEach((playerData) => {
       serverPlayerIds.add(playerData.id);
       if (playerData.id === this.socket.id) {
-        if (this.player.radius !== playerData.radius) {
-          this.player.radius = playerData.radius;
-          this.player.score = playerData.score;
+        const radiusChanged = this.player.radius !== playerData.radius;
+        const scoreChanged = this.player.score !== playerData.score;
+        this.player.radius = playerData.radius;
+        this.player.score = playerData.score;
+        if (radiusChanged) {
           this.playerBody.body.setCircle(this.player.radius, -this.player.radius, -this.player.radius);
           this.player.graphics.clear();
           this.player.graphics.lineStyle(2, 0, 1);
           this.player.graphics.fillStyle(Phaser.Display.Color.HexStringToColor(this.player.color).color);
           this.player.graphics.fillCircle(0, 0, this.player.radius);
           this.player.graphics.strokeCircle(0, 0, this.player.radius);
+        }
+        if (scoreChanged || radiusChanged) {
           this.updateScore();
         }
       } else {

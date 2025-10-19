@@ -109,13 +109,13 @@ io.on("connection", (socket) => {
   socket.on("playerMove", (data) => {
     const player = gameState.players.get(socket.id);
     if (player) {
-      // Просто обновляем позицию, полученную от клиента
+      // Полностью доверяем координатам от клиента
       player.x = data.x;
       player.y = data.y;
     }
   });
 
-  socket.on("playerAteFood", ({ foodId }) => {
+  socket.on("eatFood", (foodId) => {
     const player = gameState.players.get(socket.id);
     const food = gameState.foods.get(foodId);
 
@@ -139,17 +139,17 @@ io.on("connection", (socket) => {
   });
 });
 
-// Игровой цикл (60 FPS)
+// Игровой цикл (20 FPS для экономии ресурсов)
 setInterval(() => {
-  // Логика движения игрока удалена, так как управляется клиентом.
-  // Проверка границ теперь полностью на клиенте, убираем ее с сервера
-  
+  // Логика движения игрока полностью на клиенте
+  // Проверка границ полностью на клиенте
+
   // Отправляем всем клиентам полное состояние игры
   io.emit("gameUpdate", {
     players: Array.from(gameState.players.values()),
     foods: Array.from(gameState.foods.values()),
   });
-}, 1000 / 30); // Снижаем частоту до 30 FPS для экономии ресурсов
+}, 1000 / 20); // Снижаем частоту до 20 FPS
 
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "../client/build/index.html"));
