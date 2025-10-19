@@ -4,12 +4,15 @@ class GameScene extends Phaser.Scene {
     super({ key: "GameScene" });
     this.socket = null;
     this.player = null;
+    this.playerBody = null;
     this.otherPlayers = /* @__PURE__ */ new Map();
     this.foods = /* @__PURE__ */ new Map();
+    this.foodGroup = null;
     this.camera = null;
     this.gameWidth = 5e3;
     this.gameHeight = 5e3;
     this.targetPosition = { x: 0, y: 0 };
+    this.lerpSpeed = 0.2;
   }
   preload() {
   }
@@ -18,49 +21,53 @@ class GameScene extends Phaser.Scene {
     this.camera = this.cameras.main;
     this.camera.setBounds(0, 0, this.gameWidth, this.gameHeight);
     this.cameras.main.setBackgroundColor("#1a1a2e");
+    this.physics.world.setBounds(0, 0, this.gameWidth, this.gameHeight);
+    this.foodGroup = this.physics.add.group();
     this.socket.on("gameState", (data) => {
-      console.log("Received game state:", data);
-      this.player = data.player;
-      this.targetPosition.x = this.player.x;
-      this.targetPosition.y = this.player.y;
       this.gameWidth = data.gameWidth;
       this.gameHeight = data.gameHeight;
       this.camera.setBounds(0, 0, this.gameWidth, this.gameHeight);
-      this.player.graphics = this.add.graphics();
-      console.log("Created player graphics");
+      this.physics.world.setBounds(0, 0, this.gameWidth, this.gameHeight);
+      this.createPlayer(data.player);
       data.players.forEach((playerData) => {
-        if (playerData.id !== this.player.id) {
+        if (playerData.id !== this.socket.id) {
           this.createOtherPlayer(playerData);
         }
       });
       data.foods.forEach((foodData) => {
         this.createFood(foodData);
       });
-      console.log(
-        `Created ${data.players.length} players and ${data.foods.length} foods`
+      this.physics.add.overlap(
+        this.playerBody,
+        this.foodGroup,
+        this.handlePlayerEatFood,
+        null,
+        this
       );
       this.centerCameraOnPlayer();
     });
     this.socket.on("gameUpdate", (data) => {
       this.updatePlayers(data.players);
+      this.updateFoods(data.foods);
     });
     this.socket.on("playerJoined", (playerData) => {
-      this.createOtherPlayer(playerData);
+      if (playerData.id !== this.socket.id) {
+        this.createOtherPlayer(playerData);
+      }
       this.updatePlayersCount();
     });
     this.socket.on("playerLeft", (playerId) => {
       this.removeOtherPlayer(playerId);
       this.updatePlayersCount();
     });
-    this.socket.on("foodEaten", (data) => {
-      this.removeFood(data.foodId);
-      this.createFood(data.newFood);
-      if (data.playerId === this.player.id) {
-        this.updateScore();
-      }
+    this.socket.on("foodEaten", (foodId) => {
+      this.removeFood(foodId);
+    });
+    this.socket.on("foodCreated", (foodData) => {
+      this.createFood(foodData);
     });
     this.input.on("pointermove", (pointer) => {
-      if (this.player) {
+      if (this.playerBody) {
         const worldPoint = this.camera.getWorldPoint(pointer.x, pointer.y);
         this.targetPosition.x = worldPoint.x;
         this.targetPosition.y = worldPoint.y;
@@ -70,41 +77,55 @@ class GameScene extends Phaser.Scene {
     this.updatePlayersCount();
   }
   update() {
-    if (this.player && this.player.graphics) {
-      this.socket.emit("playerMove", {
-        x: this.targetPosition.x,
-        y: this.targetPosition.y
-      });
-      this.player.graphics.clear();
-      this.player.graphics.fillStyle(
-        Phaser.Display.Color.HexStringToColor(this.player.color).color
+    if (this.playerBody) {
+      const speed = 200 / (this.player.radius / 20);
+      this.physics.moveTo(
+        this.playerBody,
+        this.targetPosition.x,
+        this.targetPosition.y,
+        speed
       );
-      this.player.graphics.fillCircle(
-        this.player.x,
-        this.player.y,
-        this.player.radius
-      );
+      this.player.x = this.playerBody.x;
+      this.player.y = this.playerBody.y;
+      this.socket.emit("playerMove", { x: this.player.x, y: this.player.y });
       this.centerCameraOnPlayer();
-      this.updateScore();
-    } else {
-      console.log("Update: player or player.graphics is null");
     }
+    this.interpolateOtherPlayers();
+  }
+  handlePlayerEatFood(playerBody, food) {
+    const foodId = food.name;
+    this.socket.emit("playerAteFood", { foodId });
+    this.removeFood(foodId, true);
   }
   centerCameraOnPlayer() {
-    if (this.player) {
-      this.camera.centerOn(this.player.x, this.player.y);
+    if (this.playerBody) {
+      this.camera.centerOn(this.playerBody.x, this.playerBody.y);
     }
   }
-  createOtherPlayer(playerData) {
-    console.log("Creating other player:", playerData.id);
-    const graphics = this.add.graphics({ x: playerData.x, y: playerData.y });
-    graphics.fillStyle(
-      Phaser.Display.Color.HexStringToColor(playerData.color).color
+  createPlayer(playerData) {
+    this.player = playerData;
+    this.targetPosition = { x: this.player.x, y: this.player.y };
+    const playerGraphics = this.add.graphics({ x: this.player.x, y: this.player.y });
+    playerGraphics.fillStyle(Phaser.Display.Color.HexStringToColor(this.player.color).color);
+    playerGraphics.fillCircle(0, 0, this.player.radius);
+    this.physics.world.enable(playerGraphics);
+    playerGraphics.body.setCircle(
+      this.player.radius,
+      -this.player.radius,
+      -this.player.radius
     );
+    playerGraphics.body.setCollideWorldBounds(true);
+    this.playerBody = playerGraphics;
+    this.player.graphics = playerGraphics;
+  }
+  createOtherPlayer(playerData) {
+    const graphics = this.add.graphics({ x: playerData.x, y: playerData.y });
+    graphics.fillStyle(Phaser.Display.Color.HexStringToColor(playerData.color).color);
     graphics.fillCircle(0, 0, playerData.radius);
     this.otherPlayers.set(playerData.id, {
+      ...playerData,
       graphics,
-      data: playerData
+      lerpPosition: { x: playerData.x, y: playerData.y }
     });
   }
   removeOtherPlayer(playerId) {
@@ -115,79 +136,83 @@ class GameScene extends Phaser.Scene {
     }
   }
   createFood(foodData) {
-    console.log("Creating food:", foodData.id);
-    const graphics = this.add.graphics({ x: foodData.x, y: foodData.y });
-    graphics.fillStyle(
-      Phaser.Display.Color.HexStringToColor(foodData.color).color
-    );
+    if (this.foods.has(foodData.id)) return;
+    const graphics = this.add.graphics();
+    graphics.fillStyle(Phaser.Display.Color.HexStringToColor(foodData.color).color);
     graphics.fillCircle(0, 0, foodData.radius);
-    this.foods.set(foodData.id, {
-      graphics,
-      data: foodData
-    });
+    const food = this.foodGroup.create(foodData.x, foodData.y);
+    food.name = foodData.id;
+    graphics.generateTexture(foodData.id, foodData.radius * 2, foodData.radius * 2);
+    food.setTexture(foodData.id);
+    graphics.destroy();
+    food.body.setCircle(foodData.radius);
+    this.foods.set(foodData.id, food);
   }
-  removeFood(foodId) {
+  removeFood(foodId, local = false) {
     const food = this.foods.get(foodId);
     if (food) {
-      food.graphics.destroy();
+      if (this.textures.exists(food.name)) {
+        this.textures.remove(food.name);
+      }
+      food.destroy();
       this.foods.delete(foodId);
     }
   }
-  updatePlayers(playersData) {
-    const currentPlayerData = playersData.find((p) => p.id === this.player.id);
-    if (currentPlayerData) {
-      if (!this.player.graphics) {
-        this.player.graphics = this.add.graphics();
+  updateFoods(foodsData) {
+    const serverFoodIds = new Set(foodsData.map((f) => f.id));
+    foodsData.forEach((foodData) => {
+      if (!this.foods.has(foodData.id)) {
+        this.createFood(foodData);
       }
-      this.player = { ...this.player, ...currentPlayerData };
-    }
+    });
+    this.foods.forEach((food) => {
+      if (!serverFoodIds.has(food.name)) {
+        this.removeFood(food.name);
+      }
+    });
+  }
+  updatePlayers(playersData) {
+    const serverPlayerIds = /* @__PURE__ */ new Set();
     playersData.forEach((playerData) => {
-      if (playerData.id !== this.player.id) {
-        const existingPlayer = this.otherPlayers.get(playerData.id);
-        if (existingPlayer) {
-          existingPlayer.data = playerData;
-          existingPlayer.graphics.clear();
-          existingPlayer.graphics.fillStyle(
-            Phaser.Display.Color.HexStringToColor(playerData.color).color
-          );
-          existingPlayer.graphics.fillCircle(0, 0, playerData.radius);
-          existingPlayer.graphics.x = playerData.x;
-          existingPlayer.graphics.y = playerData.y;
+      serverPlayerIds.add(playerData.id);
+      if (playerData.id === this.socket.id) {
+        if (this.player.radius !== playerData.radius) {
+          this.player.radius = playerData.radius;
+          this.player.score = playerData.score;
+          this.playerBody.body.setCircle(this.player.radius, -this.player.radius, -this.player.radius);
+          this.player.graphics.clear();
+          this.player.graphics.fillStyle(Phaser.Display.Color.HexStringToColor(this.player.color).color);
+          this.player.graphics.fillCircle(0, 0, this.player.radius);
+          this.updateScore();
+        }
+      } else {
+        let otherPlayer = this.otherPlayers.get(playerData.id);
+        if (otherPlayer) {
+          otherPlayer.x = playerData.x;
+          otherPlayer.y = playerData.y;
+          if (otherPlayer.radius !== playerData.radius) {
+            otherPlayer.radius = playerData.radius;
+            otherPlayer.graphics.clear();
+            otherPlayer.graphics.fillStyle(Phaser.Display.Color.HexStringToColor(playerData.color).color);
+            otherPlayer.graphics.fillCircle(0, 0, playerData.radius);
+          }
         } else {
           this.createOtherPlayer(playerData);
         }
       }
     });
-    const currentPlayerIds = new Set(playersData.map((p) => p.id));
-    for (let [playerId] of this.otherPlayers) {
-      if (!currentPlayerIds.has(playerId)) {
+    this.otherPlayers.forEach((player, playerId) => {
+      if (!serverPlayerIds.has(playerId)) {
         this.removeOtherPlayer(playerId);
-      }
-    }
-  }
-  updateFoods(foodsData) {
-    const currentFoodIds = new Set(foodsData.map((f) => f.id));
-    for (let [foodId] of this.foods) {
-      if (!currentFoodIds.has(foodId)) {
-        this.removeFood(foodId);
-      }
-    }
-    foodsData.forEach((foodData) => {
-      const existingFood = this.foods.get(foodData.id);
-      if (existingFood) {
-        existingFood.graphics.clear();
-        existingFood.graphics.fillStyle(
-          Phaser.Display.Color.HexStringToColor(foodData.color).color
-        );
-        existingFood.graphics.fillCircle(0, 0, foodData.radius);
-        existingFood.graphics.x = foodData.x;
-        existingFood.graphics.y = foodData.y;
-      } else {
-        this.createFood(foodData);
       }
     });
   }
-  updatePlayerGraphics() {
+  interpolateOtherPlayers() {
+    this.otherPlayers.forEach((player) => {
+      player.lerpPosition.x = Phaser.Math.Linear(player.lerpPosition.x, player.x, this.lerpSpeed);
+      player.lerpPosition.y = Phaser.Math.Linear(player.lerpPosition.y, player.y, this.lerpSpeed);
+      player.graphics.setPosition(player.lerpPosition.x, player.lerpPosition.y);
+    });
   }
   updateScore() {
     if (this.player) {
@@ -195,7 +220,7 @@ class GameScene extends Phaser.Scene {
     }
   }
   updatePlayersCount() {
-    const count = this.otherPlayers.size + 1;
+    const count = this.otherPlayers.size + (this.player ? 1 : 0);
     document.getElementById("players").textContent = `Players: ${count}`;
   }
 }

@@ -20,7 +20,7 @@ app.use(express.static(path.join(__dirname, "../client/build")));
 const gameState = {
   players: new Map(),
   foods: new Map(),
-  foodGrid: new Map(),
+  foodGrid: new Map(), // Оставляем для быстрого поиска, если понадобится
   gameWidth: 5000,
   gameHeight: 5000,
 };
@@ -66,7 +66,7 @@ function spawnFood() {
     x: Math.random() * gameState.gameWidth,
     y: Math.random() * gameState.gameHeight,
     radius: 5,
-    color: `hsl(${Math.random() * 360}, 70%, 60%)`,
+    color: "#00FF00",
   };
   addFoodToState(newFood);
   return newFood;
@@ -84,20 +84,18 @@ generateInitialFood();
 io.on("connection", (socket) => {
   console.log("Player connected:", socket.id);
 
-  // Создание нового игрока
   const player = {
     id: socket.id,
     x: Math.random() * gameState.gameWidth,
     y: Math.random() * gameState.gameHeight,
     radius: 20,
-    color: `hsl(${Math.random() * 360}, 70%, 60%)`,
+    color: `#${Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0")}`,
     name: `Player_${socket.id.slice(0, 4)}`,
     score: 0,
   };
 
   gameState.players.set(socket.id, player);
 
-  // Отправка начального состояния новому игроку
   socket.emit("gameState", {
     player,
     players: Array.from(gameState.players.values()),
@@ -106,19 +104,34 @@ io.on("connection", (socket) => {
     gameHeight: gameState.gameHeight,
   });
 
-  // Уведомление других игроков о новом игроке
   socket.broadcast.emit("playerJoined", player);
 
-  // Обработка движения игрока
   socket.on("playerMove", (data) => {
     const player = gameState.players.get(socket.id);
     if (player) {
-      player.targetX = data.x;
-      player.targetY = data.y;
+      // Просто обновляем позицию, полученную от клиента
+      player.x = data.x;
+      player.y = data.y;
     }
   });
 
-  // Обработка отключения игрока
+  socket.on("playerAteFood", ({ foodId }) => {
+    const player = gameState.players.get(socket.id);
+    const food = gameState.foods.get(foodId);
+
+    if (player && food) {
+        player.score += 1;
+        player.radius += 0.5;
+
+        removeFoodFromState(foodId);
+        const newFood = spawnFood();
+        
+        // Отправляем отдельные, более легковесные события
+        io.emit("foodEaten", foodId);
+        io.emit("foodCreated", newFood);
+    }
+  });
+
   socket.on("disconnect", () => {
     console.log("Player disconnected:", socket.id);
     gameState.players.delete(socket.id);
@@ -128,84 +141,17 @@ io.on("connection", (socket) => {
 
 // Игровой цикл (60 FPS)
 setInterval(() => {
-  // Обновление позиций игроков1
-  gameState.players.forEach((player) => {
-    if (player.targetX !== undefined && player.targetY !== undefined) {
-      const speed = 200 / player.radius; // Меньшие клетки двигаются быстрее
-      const dx = player.targetX - player.x;
-      const dy = player.targetY - player.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-
-      if (distance > 1) {
-        const moveDistance = Math.min(speed, distance);
-        player.x += (dx / distance) * moveDistance;
-        player.y += (dy / distance) * moveDistance;
-      }
-    }
-
-    // Проверка границ
-    player.x = Math.max(
-      player.radius,
-      Math.min(gameState.gameWidth - player.radius, player.x),
-    );
-    player.y = Math.max(
-      player.radius,
-      Math.min(gameState.gameHeight - player.radius, player.y),
-    );
-  });
-
-  // Проверка столкновений с едой
-  gameState.players.forEach((player) => {
-    const minCellX = Math.floor((player.x - player.radius) / FOOD_CELL_SIZE);
-    const maxCellX = Math.floor((player.x + player.radius) / FOOD_CELL_SIZE);
-    const minCellY = Math.floor((player.y - player.radius) / FOOD_CELL_SIZE);
-    const maxCellY = Math.floor((player.y + player.radius) / FOOD_CELL_SIZE);
-
-    const nearbyFoodIds = new Set();
-
-    for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
-      for (let cellY = minCellY; cellY <= maxCellY; cellY++) {
-        const cellKey = `${cellX}_${cellY}`;
-        const cell = gameState.foodGrid.get(cellKey);
-        if (!cell) {
-          continue;
-        }
-        cell.forEach((foodId) => nearbyFoodIds.add(foodId));
-      }
-    }
-
-    const consumedFoodIds = [];
-
-    nearbyFoodIds.forEach((foodId) => {
-      const food = gameState.foods.get(foodId);
-      if (!food) {
-        return;
-      }
-      const dx = player.x - food.x;
-      const dy = player.y - food.y;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-
-      if (distance < player.radius) {
-        player.radius += 0.5;
-        player.score += 1;
-        consumedFoodIds.push(foodId);
-      }
-    });
-
-    consumedFoodIds.forEach((foodId) => {
-      removeFoodFromState(foodId);
-      const newFood = spawnFood();
-      io.emit("foodEaten", { playerId: player.id, foodId, newFood });
-    });
-  });
-
-  // Отправка обновленного состояния всем клиентам
+  // Логика движения игрока удалена, так как управляется клиентом.
+  // Проверка границ теперь полностью на клиенте, убираем ее с сервера
+  
+  // Отправляем всем клиентам полное состояние игры
   io.emit("gameUpdate", {
     players: Array.from(gameState.players.values()),
+    foods: Array.from(gameState.foods.values()),
   });
-}, 1000 / 60);
+}, 1000 / 30); // Снижаем частоту до 30 FPS для экономии ресурсов
 
-app.get("*_start_of_glob_character_", (req, res) => {
+app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "../client/build/index.html"));
 });
 
