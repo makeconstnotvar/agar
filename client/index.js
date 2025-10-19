@@ -30,8 +30,6 @@ class GameScene extends Phaser.Scene {
     // Set physics world bounds to match game world
     this.physics.world.setBounds(0, 0, this.gameWidth, this.gameHeight);
 
-    this.foodGroup = this.physics.add.group();
-
     this.socket.on("gameState", (data) => {
       this.gameWidth = data.gameWidth;
       this.gameHeight = data.gameHeight;
@@ -50,13 +48,7 @@ class GameScene extends Phaser.Scene {
         this.createFood(foodData);
       });
 
-      this.physics.add.overlap(
-        this.playerBody,
-        this.foodGroup,
-        this.handlePlayerEatFood,
-        null,
-        this,
-      );
+      // Столкновения теперь обрабатываются через обновление состояния игры
 
       this.centerCameraOnPlayer();
     });
@@ -118,11 +110,6 @@ class GameScene extends Phaser.Scene {
     this.interpolateOtherPlayers();
   }
   
-  handlePlayerEatFood(playerBody, food) {
-    const foodId = food.name;
-    this.socket.emit("playerAteFood", { foodId });
-    this.removeFood(foodId, true); // Удаляем еду локально немедленно
-  }
 
   centerCameraOnPlayer() {
     if (this.playerBody) {
@@ -135,9 +122,11 @@ class GameScene extends Phaser.Scene {
     this.targetPosition = { x: this.player.x, y: this.player.y };
 
     const playerGraphics = this.add.graphics({ x: this.player.x, y: this.player.y });
+    playerGraphics.lineStyle(2, 0x000000, 1); // Четкая черная обводка
     playerGraphics.fillStyle(Phaser.Display.Color.HexStringToColor(this.player.color).color);
     playerGraphics.fillCircle(0, 0, this.player.radius);
-    
+    playerGraphics.strokeCircle(0, 0, this.player.radius);
+
     this.physics.world.enable(playerGraphics);
     // Устанавливаем круглый якорь и корректное смещение
     playerGraphics.body.setCircle(
@@ -146,15 +135,17 @@ class GameScene extends Phaser.Scene {
       -this.player.radius,
     );
     playerGraphics.body.setCollideWorldBounds(true);
-    
+
     this.playerBody = playerGraphics;
     this.player.graphics = playerGraphics;
   }
 
   createOtherPlayer(playerData) {
     const graphics = this.add.graphics({ x: playerData.x, y: playerData.y });
+    graphics.lineStyle(2, 0x000000, 1); // Четкая черная обводка
     graphics.fillStyle(Phaser.Display.Color.HexStringToColor(playerData.color).color);
     graphics.fillCircle(0, 0, playerData.radius);
+    graphics.strokeCircle(0, 0, playerData.radius);
 
     this.otherPlayers.set(playerData.id, {
       ...playerData,
@@ -174,32 +165,24 @@ class GameScene extends Phaser.Scene {
   createFood(foodData) {
     if (this.foods.has(foodData.id)) return;
 
-    // Создаем графику до физического тела
-    const graphics = this.add.graphics();
+    // Создаем графику с четкими контурами
+    const graphics = this.add.graphics({ x: foodData.x, y: foodData.y });
+    graphics.lineStyle(1, 0x000000, 1); // Четкая черная обводка
     graphics.fillStyle(Phaser.Display.Color.HexStringToColor(foodData.color).color);
     graphics.fillCircle(0, 0, foodData.radius);
-    
-    // Создаем спрайт с физикой
-    const food = this.foodGroup.create(foodData.x, foodData.y);
-    food.name = foodData.id;
+    graphics.strokeCircle(0, 0, foodData.radius);
 
-    // Применяем текстуру из графики
-    graphics.generateTexture(foodData.id, foodData.radius * 2, foodData.radius * 2);
-    food.setTexture(foodData.id);
-    graphics.destroy();
-    
-    // Настраиваем физическое тело
-    food.body.setCircle(foodData.radius);
+    // Включаем физику для графики
+    this.physics.world.enable(graphics);
+    graphics.body.setCircle(foodData.radius);
+    graphics.body.setCollideWorldBounds(true);
 
-    this.foods.set(foodData.id, food);
+    this.foods.set(foodData.id, graphics);
   }
 
-  removeFood(foodId, local = false) {
+  removeFood(foodId) {
     const food = this.foods.get(foodId);
     if (food) {
-      if (this.textures.exists(food.name)) {
-        this.textures.remove(food.name);
-      }
       food.destroy();
       this.foods.delete(foodId);
     }
@@ -234,12 +217,15 @@ class GameScene extends Phaser.Scene {
             if (this.player.radius !== playerData.radius) {
                 this.player.radius = playerData.radius;
                 this.player.score = playerData.score;
-                
+
                 this.playerBody.body.setCircle(this.player.radius, -this.player.radius, -this.player.radius);
-                
+
+                // Перерисовываем игрока с четкими контурами
                 this.player.graphics.clear();
+                this.player.graphics.lineStyle(2, 0x000000, 1);
                 this.player.graphics.fillStyle(Phaser.Display.Color.HexStringToColor(this.player.color).color);
                 this.player.graphics.fillCircle(0, 0, this.player.radius);
+                this.player.graphics.strokeCircle(0, 0, this.player.radius);
                 this.updateScore();
             }
         } else {
@@ -247,12 +233,15 @@ class GameScene extends Phaser.Scene {
             if (otherPlayer) {
                 otherPlayer.x = playerData.x;
                 otherPlayer.y = playerData.y;
-                
+
                 if (otherPlayer.radius !== playerData.radius) {
                     otherPlayer.radius = playerData.radius;
+                    // Перерисовываем с четкими контурами
                     otherPlayer.graphics.clear();
+                    otherPlayer.graphics.lineStyle(2, 0x000000, 1);
                     otherPlayer.graphics.fillStyle(Phaser.Display.Color.HexStringToColor(playerData.color).color);
                     otherPlayer.graphics.fillCircle(0, 0, playerData.radius);
+                    otherPlayer.graphics.strokeCircle(0, 0, playerData.radius);
                 }
             } else {
                 this.createOtherPlayer(playerData);

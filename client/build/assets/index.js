@@ -22,7 +22,6 @@ class GameScene extends Phaser.Scene {
     this.camera.setBounds(0, 0, this.gameWidth, this.gameHeight);
     this.cameras.main.setBackgroundColor("#1a1a2e");
     this.physics.world.setBounds(0, 0, this.gameWidth, this.gameHeight);
-    this.foodGroup = this.physics.add.group();
     this.socket.on("gameState", (data) => {
       this.gameWidth = data.gameWidth;
       this.gameHeight = data.gameHeight;
@@ -37,13 +36,6 @@ class GameScene extends Phaser.Scene {
       data.foods.forEach((foodData) => {
         this.createFood(foodData);
       });
-      this.physics.add.overlap(
-        this.playerBody,
-        this.foodGroup,
-        this.handlePlayerEatFood,
-        null,
-        this
-      );
       this.centerCameraOnPlayer();
     });
     this.socket.on("gameUpdate", (data) => {
@@ -92,11 +84,6 @@ class GameScene extends Phaser.Scene {
     }
     this.interpolateOtherPlayers();
   }
-  handlePlayerEatFood(playerBody, food) {
-    const foodId = food.name;
-    this.socket.emit("playerAteFood", { foodId });
-    this.removeFood(foodId, true);
-  }
   centerCameraOnPlayer() {
     if (this.playerBody) {
       this.camera.centerOn(this.playerBody.x, this.playerBody.y);
@@ -106,8 +93,10 @@ class GameScene extends Phaser.Scene {
     this.player = playerData;
     this.targetPosition = { x: this.player.x, y: this.player.y };
     const playerGraphics = this.add.graphics({ x: this.player.x, y: this.player.y });
+    playerGraphics.lineStyle(2, 0, 1);
     playerGraphics.fillStyle(Phaser.Display.Color.HexStringToColor(this.player.color).color);
     playerGraphics.fillCircle(0, 0, this.player.radius);
+    playerGraphics.strokeCircle(0, 0, this.player.radius);
     this.physics.world.enable(playerGraphics);
     playerGraphics.body.setCircle(
       this.player.radius,
@@ -120,8 +109,10 @@ class GameScene extends Phaser.Scene {
   }
   createOtherPlayer(playerData) {
     const graphics = this.add.graphics({ x: playerData.x, y: playerData.y });
+    graphics.lineStyle(2, 0, 1);
     graphics.fillStyle(Phaser.Display.Color.HexStringToColor(playerData.color).color);
     graphics.fillCircle(0, 0, playerData.radius);
+    graphics.strokeCircle(0, 0, playerData.radius);
     this.otherPlayers.set(playerData.id, {
       ...playerData,
       graphics,
@@ -137,23 +128,19 @@ class GameScene extends Phaser.Scene {
   }
   createFood(foodData) {
     if (this.foods.has(foodData.id)) return;
-    const graphics = this.add.graphics();
+    const graphics = this.add.graphics({ x: foodData.x, y: foodData.y });
+    graphics.lineStyle(1, 0, 1);
     graphics.fillStyle(Phaser.Display.Color.HexStringToColor(foodData.color).color);
     graphics.fillCircle(0, 0, foodData.radius);
-    const food = this.foodGroup.create(foodData.x, foodData.y);
-    food.name = foodData.id;
-    graphics.generateTexture(foodData.id, foodData.radius * 2, foodData.radius * 2);
-    food.setTexture(foodData.id);
-    graphics.destroy();
-    food.body.setCircle(foodData.radius);
-    this.foods.set(foodData.id, food);
+    graphics.strokeCircle(0, 0, foodData.radius);
+    this.physics.world.enable(graphics);
+    graphics.body.setCircle(foodData.radius);
+    graphics.body.setCollideWorldBounds(true);
+    this.foods.set(foodData.id, graphics);
   }
-  removeFood(foodId, local = false) {
+  removeFood(foodId) {
     const food = this.foods.get(foodId);
     if (food) {
-      if (this.textures.exists(food.name)) {
-        this.textures.remove(food.name);
-      }
       food.destroy();
       this.foods.delete(foodId);
     }
@@ -181,8 +168,10 @@ class GameScene extends Phaser.Scene {
           this.player.score = playerData.score;
           this.playerBody.body.setCircle(this.player.radius, -this.player.radius, -this.player.radius);
           this.player.graphics.clear();
+          this.player.graphics.lineStyle(2, 0, 1);
           this.player.graphics.fillStyle(Phaser.Display.Color.HexStringToColor(this.player.color).color);
           this.player.graphics.fillCircle(0, 0, this.player.radius);
+          this.player.graphics.strokeCircle(0, 0, this.player.radius);
           this.updateScore();
         }
       } else {
@@ -193,8 +182,10 @@ class GameScene extends Phaser.Scene {
           if (otherPlayer.radius !== playerData.radius) {
             otherPlayer.radius = playerData.radius;
             otherPlayer.graphics.clear();
+            otherPlayer.graphics.lineStyle(2, 0, 1);
             otherPlayer.graphics.fillStyle(Phaser.Display.Color.HexStringToColor(playerData.color).color);
             otherPlayer.graphics.fillCircle(0, 0, playerData.radius);
+            otherPlayer.graphics.strokeCircle(0, 0, playerData.radius);
           }
         } else {
           this.createOtherPlayer(playerData);
